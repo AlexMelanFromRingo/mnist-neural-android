@@ -1,0 +1,6 @@
+<resources>
+    <string name="app_name">MNIST Neural</string>
+    <string name="clear_button">Очистить</string>
+    <string name="predict">Predict</string>
+    <string name="train">Train</string>
+</resources>
