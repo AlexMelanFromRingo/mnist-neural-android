@@ -209,38 +209,69 @@ class MainViewModel : ViewModel() {
         _prediction.value = null
     }
 
-    // ---- Model save / load ----
+    // ---- Model save / load / list ----
     private val _ioStatus = MutableStateFlow<String?>(null)
     val ioStatus: StateFlow<String?> = _ioStatus.asStateFlow()
 
-    fun saveModel(context: Context) {
+    private val _savedModels = MutableStateFlow<List<ModelStore.Info>>(emptyList())
+    val savedModels: StateFlow<List<ModelStore.Info>> = _savedModels.asStateFlow()
+
+    /** Re-reads the saved-model list (header only — cheap). */
+    fun refreshModels(context: Context) {
+        val app = context.applicationContext
+        viewModelScope.launch(Dispatchers.IO) {
+            _savedModels.value = try {
+                ModelStore.list(app)
+            } catch (e: Exception) {
+                emptyList()
+            }
+        }
+    }
+
+    /** A readable default name derived from the current architecture. */
+    fun suggestedModelName(): String {
+        val hasConv = hidden.any { it.kind == LayerKind.CONV }
+        val denseUnits = hidden.filter { it.kind == LayerKind.DENSE }.map { it.units }
+        return when {
+            hasConv -> "CNN"
+            denseUnits.isEmpty() -> "Перцептрон"
+            else -> "MLP " + denseUnits.joinToString("-")
+        }
+    }
+
+    fun saveModel(context: Context, name: String) {
         val net = network
         if (net == null) {
             _ioStatus.value = "Сначала соберите и обучите сеть"
             return
         }
+        val clean = name.trim().ifBlank { suggestedModelName() }
         val app = context.applicationContext
         val snapshot = hidden.toList()
         val l = loss
+        val summary = net.layers().joinToString(" → ") { it.describe() }
+        val params = net.paramCount()
+        val now = System.currentTimeMillis()
         viewModelScope.launch(Dispatchers.IO) {
             _ioStatus.value = try {
-                ModelStore.save(app, snapshot, l, net)
-                "Модель сохранена (${net.paramCount()} параметров)"
+                ModelStore.save(app, clean, snapshot, l, net, now, params, summary)
+                _savedModels.value = ModelStore.list(app)
+                "Модель «${ModelStore.sanitize(clean)}» сохранена ($params параметров)"
             } catch (e: Exception) {
                 "Ошибка сохранения: ${e.message}"
             }
         }
     }
 
-    fun loadModel(context: Context) {
+    fun loadModel(context: Context, name: String) {
         val app = context.applicationContext
-        if (!ModelStore.exists(app)) {
-            _ioStatus.value = "Нет сохранённой модели"
+        if (!ModelStore.exists(app, name)) {
+            _ioStatus.value = "Модель не найдена"
             return
         }
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val loaded = ModelStore.load(app, inputShape, numClasses)
+                val loaded = ModelStore.load(app, name, inputShape, numClasses)
                 withContext(Dispatchers.Main) {
                     hidden.clear()
                     hidden.addAll(loaded.hidden)
@@ -250,9 +281,22 @@ class MainViewModel : ViewModel() {
                             "\nПараметров: ${loaded.net.paramCount()}"
                     _prediction.value = null
                 }
-                _ioStatus.value = "Модель загружена"
+                _ioStatus.value = "Модель «$name» загружена"
             } catch (e: Exception) {
                 _ioStatus.value = "Ошибка загрузки: ${e.message}"
+            }
+        }
+    }
+
+    fun deleteModel(context: Context, name: String) {
+        val app = context.applicationContext
+        viewModelScope.launch(Dispatchers.IO) {
+            _ioStatus.value = try {
+                val ok = ModelStore.delete(app, name)
+                _savedModels.value = ModelStore.list(app)
+                if (ok) "Модель «$name» удалена" else "Не удалось удалить модель"
+            } catch (e: Exception) {
+                "Ошибка удаления: ${e.message}"
             }
         }
     }

@@ -10,6 +10,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
@@ -124,15 +126,9 @@ fun ConstructorScreen(vm: MainViewModel) {
 
         item {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = { vm.addLayer(LayerKind.DENSE) }, modifier = Modifier.weight(1f)) {
-                    Icon(Icons.Filled.Add, null); Text("Dense")
-                }
-                OutlinedButton(onClick = { vm.addLayer(LayerKind.CONV) }, modifier = Modifier.weight(1f)) {
-                    Icon(Icons.Filled.Add, null); Text("Conv")
-                }
-                OutlinedButton(onClick = { vm.addLayer(LayerKind.POOL) }, modifier = Modifier.weight(1f)) {
-                    Icon(Icons.Filled.Add, null); Text("Pool")
-                }
+                AddLayerButton("Dense", Modifier.weight(1f)) { vm.addLayer(LayerKind.DENSE) }
+                AddLayerButton("Conv", Modifier.weight(1f)) { vm.addLayer(LayerKind.CONV) }
+                AddLayerButton("Pool", Modifier.weight(1f)) { vm.addLayer(LayerKind.POOL) }
             }
         }
 
@@ -163,6 +159,20 @@ fun ConstructorScreen(vm: MainViewModel) {
         }
 
         item { Spacer(Modifier.height(24.dp)) }
+    }
+}
+
+/** Compact "+ Dense/Conv/Pool" button that fits three-up without wrapping its label. */
+@Composable
+private fun AddLayerButton(label: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    OutlinedButton(
+        onClick = onClick,
+        modifier = modifier,
+        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
+    ) {
+        Icon(Icons.Filled.Add, null, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(4.dp))
+        Text(label, maxLines = 1, softWrap = false)
     }
 }
 

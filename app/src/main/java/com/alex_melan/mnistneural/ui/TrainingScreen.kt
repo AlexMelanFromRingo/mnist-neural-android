@@ -14,17 +14,28 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -44,6 +55,12 @@ fun TrainingScreen(vm: MainViewModel) {
     val ioStatus by vm.ioStatus.collectAsState()
     val evalResult by vm.evalResult.collectAsState()
     val isEvaluating by vm.isEvaluating.collectAsState()
+    val savedModels by vm.savedModels.collectAsState()
+
+    var showSaveDialog by remember { mutableStateOf(false) }
+    var pendingDelete by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(Unit) { vm.refreshModels(context) }
 
     Column(
         Modifier
@@ -88,21 +105,22 @@ fun TrainingScreen(vm: MainViewModel) {
 
         progress?.let { ProgressCard(it, isTraining) }
 
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(
-                onClick = { vm.saveModel(context) },
-                enabled = vm.isTrained && !isTraining,
-                modifier = Modifier.weight(1f),
-            ) { Text("Сохранить") }
-            OutlinedButton(
-                onClick = { vm.loadModel(context) },
-                enabled = !isTraining,
-                modifier = Modifier.weight(1f),
-            ) { Text("Загрузить") }
-        }
+        OutlinedButton(
+            onClick = { showSaveDialog = true },
+            enabled = vm.isTrained && !isTraining,
+            modifier = Modifier.fillMaxWidth(),
+        ) { Text("Сохранить модель") }
+
         ioStatus?.let {
             Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
         }
+
+        SavedModelsCard(
+            models = savedModels,
+            enabled = !isTraining,
+            onLoad = { vm.loadModel(context, it) },
+            onDelete = { pendingDelete = it },
+        )
 
         Button(
             onClick = { vm.evaluateTest() },
@@ -114,7 +132,133 @@ fun TrainingScreen(vm: MainViewModel) {
 
         Spacer(Modifier.height(24.dp))
     }
+
+    if (showSaveDialog) {
+        var name by remember { mutableStateOf(vm.suggestedModelName()) }
+        val willOverwrite = savedModels.any { it.name == ModelStore.sanitize(name) }
+        AlertDialog(
+            onDismissRequest = { showSaveDialog = false },
+            title = { Text("Сохранить модель") },
+            text = {
+                Column {
+                    OutlinedTextField(
+                        value = name,
+                        onValueChange = { name = it },
+                        label = { Text("Имя модели") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    if (willOverwrite) {
+                        Spacer(Modifier.height(8.dp))
+                        Text("Модель с таким именем будет перезаписана",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error)
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    vm.saveModel(context, name)
+                    showSaveDialog = false
+                }) { Text(if (willOverwrite) "Перезаписать" else "Сохранить") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showSaveDialog = false }) { Text("Отмена") }
+            },
+        )
+    }
+
+    pendingDelete?.let { name ->
+        AlertDialog(
+            onDismissRequest = { pendingDelete = null },
+            title = { Text("Удалить модель?") },
+            text = { Text("«$name» будет удалена без возможности восстановления.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    vm.deleteModel(context, name)
+                    pendingDelete = null
+                }) { Text("Удалить") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDelete = null }) { Text("Отмена") }
+            },
+        )
+    }
 }
+
+@Composable
+private fun SavedModelsCard(
+    models: List<ModelStore.Info>,
+    enabled: Boolean,
+    onLoad: (String) -> Unit,
+    onDelete: (String) -> Unit,
+) {
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp)) {
+            Text("Сохранённые модели", style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(4.dp))
+            if (models.isEmpty()) {
+                Text("Пока нет сохранённых моделей. Обучите сеть и нажмите «Сохранить модель».",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } else {
+                models.forEachIndexed { i, m ->
+                    if (i > 0) Spacer(Modifier.height(4.dp))
+                    SavedModelRow(m, enabled, onLoad, onDelete)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SavedModelRow(
+    m: ModelStore.Info,
+    enabled: Boolean,
+    onLoad: (String) -> Unit,
+    onDelete: (String) -> Unit,
+) {
+    Card(
+        Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+    ) {
+        Column(Modifier.padding(12.dp)) {
+            Text(m.name, style = MaterialTheme.typography.titleSmall)
+            Text(m.summary, style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("${formatParams(m.paramCount)} параметров • ${formatSize(m.sizeBytes)} • ${formatDate(m.savedAt)}",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(8.dp))
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(
+                    onClick = { onLoad(m.name) },
+                    enabled = enabled,
+                    modifier = Modifier.weight(1f),
+                ) { Text("Загрузить") }
+                IconButton(onClick = { onDelete(m.name) }, enabled = enabled) {
+                    Icon(Icons.Filled.Delete, "удалить", tint = MaterialTheme.colorScheme.error)
+                }
+            }
+        }
+    }
+}
+
+private fun formatParams(n: Int): String = when {
+    n >= 1_000_000 -> "%.1fM".format(n / 1_000_000.0)
+    n >= 1_000 -> "%.1fK".format(n / 1_000.0)
+    else -> n.toString()
+}
+
+private fun formatSize(bytes: Long): String = when {
+    bytes >= 1_000_000 -> "%.1f МБ".format(bytes / 1_000_000.0)
+    else -> "%d КБ".format((bytes / 1000).coerceAtLeast(1))
+}
+
+private fun formatDate(millis: Long): String =
+    java.text.SimpleDateFormat("dd.MM.yyyy HH:mm", java.util.Locale.getDefault())
+        .format(java.util.Date(millis))
 
 @Composable
 private fun EvalCard(r: EvalResult, onExport: () -> Unit) {

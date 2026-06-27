@@ -15,21 +15,62 @@ import java.io.FileInputStream
 import java.io.FileOutputStream
 
 /**
- * Persists a trained model to internal storage: the no-code architecture (so it can be restored
- * into the constructor) followed by the engine's weight blob. One slot ({@code model.mnn}).
+ * Persists trained models to internal storage. Each model is one file in the `models/` directory:
+ * a lightweight header (save time, parameter count, a human-readable summary), then the no-code
+ * architecture (so it can be restored into the constructor), then the engine's weight blob.
+ *
+ * Multiple named models are supported — they can be listed (header read only, no weights loaded),
+ * loaded and deleted independently.
  */
 object ModelStore {
 
-    private const val FILE = "model.mnn"
-    private const val MAGIC = 0x4D4E4D31 // 'MNM1'
+    private const val MAGIC = 0x4D4E4D32 // 'MNM2'
+    private const val DIR = "models"
+    private const val EXT = ".mnn"
 
-    fun file(context: Context): File = File(context.filesDir, FILE)
+    private fun dir(context: Context): File = File(context.filesDir, DIR).apply { mkdirs() }
 
-    fun exists(context: Context): Boolean = file(context).exists()
+    fun fileFor(context: Context, name: String): File = File(dir(context), sanitize(name) + EXT)
 
-    fun save(context: Context, hidden: List<LayerUi>, loss: Loss, net: Network) {
-        DataOutputStream(BufferedOutputStream(FileOutputStream(file(context)))).use { o ->
+    fun exists(context: Context, name: String): Boolean = fileFor(context, name).exists()
+
+    /**
+     * Restricts a user-entered name to a safe, bounded filename stem: keeps letters/digits
+     * (incl. Cyrillic), dot, underscore and hyphen; everything else (spaces, slashes, control
+     * chars, …) becomes '_'. Idempotent.
+     */
+    fun sanitize(name: String): String {
+        val out = StringBuilder()
+        for (c in name.trim()) {
+            out.append(if (c.isLetterOrDigit() || c == '.' || c == '_' || c == '-') c else '_')
+        }
+        return out.toString().take(60).ifBlank { "model" }
+    }
+
+    /** Header metadata for the model list — read without touching the weight blob. */
+    class Info(
+        val name: String,
+        val savedAt: Long,
+        val paramCount: Int,
+        val summary: String,
+        val sizeBytes: Long,
+    )
+
+    fun save(
+        context: Context,
+        name: String,
+        hidden: List<LayerUi>,
+        loss: Loss,
+        net: Network,
+        savedAt: Long,
+        paramCount: Int,
+        summary: String,
+    ) {
+        DataOutputStream(BufferedOutputStream(FileOutputStream(fileFor(context, name)))).use { o ->
             o.writeInt(MAGIC)
+            o.writeLong(savedAt)
+            o.writeInt(paramCount)
+            o.writeUTF(summary)
             o.writeUTF(loss.name)
             o.writeInt(hidden.size)
             for (l in hidden) {
@@ -50,12 +91,45 @@ object ModelStore {
         }
     }
 
+    /** All saved models, newest first. Corrupt or foreign files are skipped. */
+    fun list(context: Context): List<Info> {
+        val files = dir(context).listFiles { f -> f.isFile && f.name.endsWith(EXT) } ?: return emptyList()
+        val out = ArrayList<Info>(files.size)
+        for (f in files) {
+            try {
+                DataInputStream(BufferedInputStream(FileInputStream(f))).use { i ->
+                    if (i.readInt() != MAGIC) return@use
+                    val savedAt = i.readLong()
+                    val params = i.readInt()
+                    val summary = i.readUTF()
+                    out.add(
+                        Info(
+                            name = f.name.removeSuffix(EXT),
+                            savedAt = savedAt,
+                            paramCount = params,
+                            summary = summary,
+                            sizeBytes = f.length(),
+                        )
+                    )
+                }
+            } catch (_: Exception) {
+                // skip an unreadable / partially written file
+            }
+        }
+        out.sortByDescending { it.savedAt }
+        return out
+    }
+
+    fun delete(context: Context, name: String): Boolean = fileFor(context, name).delete()
+
     class Loaded(val hidden: List<LayerUi>, val loss: Loss, val net: Network)
 
-    fun load(context: Context, inputShape: Shape, numClasses: Int): Loaded {
-        DataInputStream(BufferedInputStream(FileInputStream(file(context)))).use { i ->
-            val magic = i.readInt()
-            require(magic == MAGIC) { "Неверный формат файла модели" }
+    fun load(context: Context, name: String, inputShape: Shape, numClasses: Int): Loaded {
+        DataInputStream(BufferedInputStream(FileInputStream(fileFor(context, name)))).use { i ->
+            require(i.readInt() == MAGIC) { "Неверный формат файла модели" }
+            i.readLong() // savedAt
+            i.readInt()  // paramCount
+            i.readUTF()  // summary
             val loss = Loss.valueOf(i.readUTF())
             val n = i.readInt()
             val hidden = ArrayList<LayerUi>(n)

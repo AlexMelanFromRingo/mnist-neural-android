@@ -2,6 +2,8 @@ package com.alex_melan.mnistneural.ui
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -97,45 +99,54 @@ fun ConnectionEditorScreen(
             }
             Spacer(Modifier.height(8.dp))
 
-            if (focusMode) {
-                NeuronFocus(nIn, nOut, neuron, mask, version, activeColor, inactiveColor,
-                    onPickNeuron = { neuron = it },
-                    onToggle = { i -> mask[neuron * nIn + i] = !mask[neuron * nIn + i]; version++ })
-                Row(Modifier.fillMaxWidth().padding(top = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = {
-                        for (i in 0 until nIn) mask[neuron * nIn + i] = true; version++
-                    }, modifier = Modifier.weight(1f)) { Text("Все (нейрон)") }
-                    OutlinedButton(onClick = {
-                        for (i in 0 until nIn) mask[neuron * nIn + i] = false; version++
-                    }, modifier = Modifier.weight(1f)) { Text("Сброс (нейрон)") }
+            // Scrollable middle so the canvas + per-layer controls never push the action bar off-screen.
+            Column(
+                Modifier
+                    .weight(1f)
+                    .verticalScroll(rememberScrollState()),
+            ) {
+                if (focusMode) {
+                    NeuronFocus(nIn, nOut, neuron, mask, version, activeColor, inactiveColor,
+                        onPickNeuron = { neuron = it },
+                        onToggle = { i -> mask[neuron * nIn + i] = !mask[neuron * nIn + i]; version++ })
+                    Row(Modifier.fillMaxWidth().padding(top = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = {
+                            for (i in 0 until nIn) mask[neuron * nIn + i] = true; version++
+                        }, modifier = Modifier.weight(1f)) { Text("Все (нейрон)") }
+                        OutlinedButton(onClick = {
+                            for (i in 0 until nIn) mask[neuron * nIn + i] = false; version++
+                        }, modifier = Modifier.weight(1f)) { Text("Сброс (нейрон)") }
+                    }
+                } else {
+                    MatrixGrid(nIn, nOut, mask, version, activeColor, inactiveColor) { row, col ->
+                        val k = row * nIn + col
+                        mask[k] = !mask[k]
+                        version++
+                    }
                 }
-            } else {
-                MatrixGrid(nIn, nOut, mask, version, activeColor, inactiveColor) { row, col ->
-                    val k = row * nIn + col
-                    mask[k] = !mask[k]
-                    version++
+
+                Spacer(Modifier.height(12.dp))
+                Text("Ко всему слою:", style = MaterialTheme.typography.titleSmall)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = { mask.fill(true); version++ }, modifier = Modifier.weight(1f)) {
+                        Text("Все")
+                    }
+                    OutlinedButton(onClick = { mask.fill(false); version++ }, modifier = Modifier.weight(1f)) {
+                        Text("Сброс")
+                    }
+                    OutlinedButton(onClick = {
+                        val r = Random(42)
+                        for (i in mask.indices) mask[i] = r.nextFloat() > 0.5f
+                        version++
+                    }, modifier = Modifier.weight(1f)) { Text("−50%") }
                 }
+                Spacer(Modifier.height(12.dp))
             }
 
-            Spacer(Modifier.height(12.dp))
-            Text("Ко всему слою:", style = MaterialTheme.typography.titleSmall)
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = { mask.fill(true); version++ }, modifier = Modifier.weight(1f)) {
-                    Text("Все")
-                }
-                OutlinedButton(onClick = { mask.fill(false); version++ }, modifier = Modifier.weight(1f)) {
-                    Text("Сброс")
-                }
-                OutlinedButton(onClick = {
-                    val r = Random(42)
-                    for (i in mask.indices) mask[i] = r.nextFloat() > 0.5f
-                    version++
-                }, modifier = Modifier.weight(1f)) { Text("−50%") }
-            }
-
-            Spacer(Modifier.weight(1f))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            // Pinned action bar — always visible regardless of screen height.
+            Row(Modifier.fillMaxWidth().padding(top = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = onClose, modifier = Modifier.weight(1f)) { Text("Отмена") }
                 Button(onClick = {
                     onSave(if (mask.all { it }) null else mask.copyOf())
